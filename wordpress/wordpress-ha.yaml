@@ -85,7 +85,7 @@ Parameters:
     Description: 'The ACM Certificate ARN for the CloudFront distribution. Must be created in the us-east-1 region!'
     Type: String
   ElbAcmCertificate:
-    Description: 'The ACM Certificate ARN for the ELB. Must be created in the same region as this stack!'
+    Description: 'Optional. The ACM Certificate ARN for the ELB. Must be created in the same region as this stack!'
     Type: String
   BlogTitle:
     Description: 'The title of the WordPress blog.'
@@ -201,6 +201,7 @@ Conditions:
   HasAlertTopicAndNotEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasNotEFSProvisionedThroughput]
   HasCloudFrontEnabled: !Equals [!Ref CloudFrontEnabled, 'Enabled']
   HasCloudFrontDisabled: !Equals [!Ref CloudFrontEnabled, 'Disabled']
+  HasElbAcmCertificate: !Not [!Equals [!Ref ElbAcmCertificate, '']]
 Resources:
   WebServerLogs:
     Type: 'AWS::Logs::LogGroup'
@@ -370,8 +371,8 @@ Resources:
       Listeners:
       - InstancePort: '80'
         InstanceProtocol: HTTP
-        LoadBalancerPort: '443'
-        Protocol: HTTPS
+        LoadBalancerPort: !If [ HasElbAcmCertificate, '443', '80' ]
+        Protocol: !If [ HasElbAcmCertificate, 'HTTPS', 'HTTP' ]
         SSLCertificateId: !Ref ElbAcmCertificate
       HealthCheck:
         HealthyThreshold: '2'
@@ -1131,7 +1132,7 @@ Resources:
         - DomainName: !GetAtt 'LoadBalancer.DNSName'
           Id: elb
           CustomOriginConfig:
-            OriginProtocolPolicy: 'https-only'
+            OriginProtocolPolicy: !If [ HasElbAcmCertificate, 'https-only', 'http-only' ]
             OriginReadTimeout: 60
         DefaultCacheBehavior:
           AllowedMethods:
