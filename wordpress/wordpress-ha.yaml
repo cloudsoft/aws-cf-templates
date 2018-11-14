@@ -29,6 +29,7 @@ Metadata:
         default: 'Domain Name and SSL certificates'
       Parameters:
       - SubDomainNameWithDot
+      - CloudFrontEnabled
       - CloudFrontAcmCertificate
       - ElbAcmCertificate
     - Label:
@@ -75,6 +76,11 @@ Parameters:
   ParentZoneStack:
     Description: 'Stack name of parent zone stack based on vpc/zone-*.yaml template.'
     Type: String
+  CloudFrontEnabled:
+    Description: Enable or Disable the use of CloudFront
+    Type: String
+    AllowedValues: [ Enabled, Disabled ]
+    Default: Enabled
   CloudFrontAcmCertificate:
     Description: 'The ACM Certificate ARN for the CloudFront distribution. Must be created in the us-east-1 region!'
     Type: String
@@ -193,6 +199,8 @@ Conditions:
   HasNotEFSProvisionedThroughput: !Equals [!Ref EFSProvisionedThroughputInMibps, '0.0']
   HasAlertTopicAndEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasEFSProvisionedThroughput]
   HasAlertTopicAndNotEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasNotEFSProvisionedThroughput]
+  HasCloudFrontEnabled: !Equals [!Ref CloudFrontEnabled, 'Enabled']
+  HasCloudFrontDisabled: !Equals [!Ref CloudFrontEnabled, 'Disabled']
 Resources:
   WebServerLogs:
     Type: 'AWS::Logs::LogGroup'
@@ -1097,8 +1105,8 @@ Resources:
     Type: 'AWS::Route53::RecordSet'
     Properties:
       AliasTarget:
-        HostedZoneId: Z2FDTNDATAQYW2 # Magic CloudFront number
-        DNSName: !GetAtt 'CloudFrontDistribution.DomainName'
+        HostedZoneId: !If [ HasCloudFrontEnabled, Z2FDTNDATAQYW2, !GetAtt 'LoadBalancer.CanonicalHostedZoneNameID' ]
+        DNSName: !If [ HasCloudFrontEnabled, !GetAtt 'CloudFrontDistribution.DomainName', !GetAtt 'LoadBalancer.DNSName' ]
       HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
       Name: !Sub
       - '${SubDomainNameWithDot}${HostedZoneName}'
@@ -1107,6 +1115,7 @@ Resources:
       Type: A
   CloudFrontDistribution:
     Type: 'AWS::CloudFront::Distribution'
+    Condition: HasCloudFrontEnabled
     Properties:
       DistributionConfig:
         Aliases:
@@ -1203,11 +1212,13 @@ Outputs:
     Value: !Sub '${AWS::StackName}'
   CloudFrontID:
     Description: 'The ID of the CloudFront distribution.'
+    Condition: HasCloudFrontEnabled
     Value: !Ref CloudFrontDistribution
     Export:
       Name: !Sub '${AWS::StackName}-CloudFrontARN'
   CloudFrontDomainName:
     Description: 'The domain name of the CloudFront distribution.'
+    Condition: HasCloudFrontEnabled
     Value: !Sub ${CloudFrontDistribution.DomainName}
     Export:
       Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
