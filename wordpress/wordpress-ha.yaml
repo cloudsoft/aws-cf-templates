@@ -39,6 +39,7 @@ Metadata:
       - BlogAdminUsername
       - BlogAdminPassword
       - BlogAdminEMail
+      - PhpVersion
     - Label:
         default: 'EC2 Parameters'
       Parameters:
@@ -104,6 +105,11 @@ Parameters:
   BlogAdminEMail:
     Description: 'The email address of the WordPress admin.'
     Type: String
+  PhpVersion:
+    Description: The version of PHP to use. Must be supported by Amazon Linux AMI. Can be changed after deployment, but requires re-cycle of instance in the ASG.
+    Type: String
+    AllowedValues: [ 7.1, 7.2 ]
+    Default: 7.2
   WebServerKeyName:
     Description: 'Optional key pair of the ec2-user to establish a SSH connection to the web server.'
     Type: String
@@ -777,8 +783,8 @@ Resources:
         extras:
           commands:
             a_enable_php:
-              command: 'amazon-linux-extras enable php7.2'
-              test: "! grep -Fxq '[amzn2extra-php7.2]' /etc/yum.repos.d/amzn2-extras.repo"
+              command: !Sub 'amazon-linux-extras enable php${PhpVersion}'
+              test: !Sub "! grep -Fxq '[amzn2extra-php${PhpVersion}]' /etc/yum.repos.d/amzn2-extras.repo"
         config:
           packages:
             yum:
