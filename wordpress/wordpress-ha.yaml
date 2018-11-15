@@ -218,7 +218,7 @@ Resources:
     Properties:
       GroupDescription: 'wordpress-elb'
       VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
-  LoadBalancerSecurityGroupInWorld:
+  LoadBalancerSecurityGroupInWorldIPv4:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasNotAuthProxySecurityGroup
     Properties:
@@ -227,6 +227,15 @@ Resources:
       FromPort: !If [ HasElbAcmCertificate, '443', '80' ]
       ToPort: !If [ HasElbAcmCertificate, '443', '80' ]
       CidrIp: '0.0.0.0/0'
+  LoadBalancerSecurityGroupInWorldIPv6:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: HasNotAuthProxySecurityGroup
+    Properties:
+      GroupId: !Ref LoadBalancerSecurityGroup
+      IpProtocol: tcp
+      FromPort: !If [ HasElbAcmCertificate, '443', '80' ]
+      ToPort: !If [ HasElbAcmCertificate, '443', '80' ]
+      CidrIpv6: '::/0'
   LoadBalancerSecurityGroupInAuthProxy:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasAuthProxySecurityGroup
