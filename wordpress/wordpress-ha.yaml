@@ -806,6 +806,17 @@ Resources:
               mariadb: []
               httpd: []
           files:
+            '/root/httpd.sh':
+              content: |
+                #!/bin/bash -ex
+                for conf in /var/www/httpd.conf.d/*.conf; do
+                  if [ -f $conf ]; then
+                    ln -s $conf /etc/httpd/conf.d
+                  fi
+                done
+              mode: '000500'
+              owner: root
+              group: root
             '/root/php.sh':
               content: |
                 #!/bin/bash -ex
@@ -871,10 +882,13 @@ Resources:
               owner: root
               group: root
           commands:
-            01_php:
+            01_httpd:
+              command: '/root/httpd.sh'
+              cwd: '/var/www/html'
+            02_php:
               command: '/root/php.sh'
               cwd: '/var/www/html'
-            02_wordpress:
+            03_wordpress:
               command: '/root/wordpress.sh'
               cwd: '/var/www/html'
           services:
