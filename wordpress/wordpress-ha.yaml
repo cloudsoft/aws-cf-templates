@@ -218,8 +218,8 @@ Resources:
     Properties:
       GroupId: !Ref LoadBalancerSecurityGroup
       IpProtocol: tcp
-      FromPort: 443
-      ToPort: 443
+      FromPort: !If [ HasElbAcmCertificate, '443', '80' ]
+      ToPort: !If [ HasElbAcmCertificate, '443', '80' ]
       CidrIp: '0.0.0.0/0'
   LoadBalancerSecurityGroupInAuthProxy:
     Type: 'AWS::EC2::SecurityGroupIngress'
@@ -833,8 +833,8 @@ Resources:
                     if ! php wp-cli.phar core is-installed --allow-root; then
                       php wp-cli.phar core download --allow-root --version=4.9.8
                       php wp-cli.phar core config --dbname='wordpress' --dbuser='wordpress' --dbpass='${DBMasterUserPassword}' --dbhost='${DBHost}' --allow-root
-                      php wp-cli.phar core install --url='https://${DomainName}' --title='${BlogTitle}' --admin_user='${BlogAdminUsername}' --admin_password='${BlogAdminPassword}' --admin_email='${BlogAdminEMail}' --skip-email --allow-root
-                      sed -i "/$table_prefix = 'wp_';/a\$_SERVER['HTTPS'] = 'on';" /var/www/html/wp-config.php
+                      php wp-cli.phar core install --url='${Protocol}://${DomainName}' --title='${BlogTitle}' --admin_user='${BlogAdminUsername}' --admin_password='${BlogAdminPassword}' --admin_email='${BlogAdminEMail}' --skip-email --allow-root
+                      sed -i "/$table_prefix = 'wp_';/a\$_SERVER['HTTPS'] = '${HttpsOnOrOff}';" /var/www/html/wp-config.php
                     fi
                     chown -R apache:apache /var/www/html
                     chmod u+wrx /var/www/html/wp-content/*
@@ -850,6 +850,8 @@ Resources:
                 - '${SubDomainNameWithDot}${HostedZoneName}'
                 - SubDomainNameWithDot: !Ref SubDomainNameWithDot
                   HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
+                Protocol: !If [ HasElbAcmCertificate, 'https', 'http' ]
+                HttpsOnOrOff: !If [ HasElbAcmCertificate, 'on', 'off' ]
               mode: '000500'
               owner: root
               group: root
