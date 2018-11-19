@@ -807,13 +807,30 @@ Resources:
               httpd: []
           files:
             '/root/httpd.sh':
-              content: |
+              content: !Sub |
                 #!/bin/bash -ex
+                # Add any extra virtual host configurations + ship logs to CloudWatch
                 for conf in /var/www/httpd.conf.d/*.conf; do
                   if [ -f $conf ]; then
-                    ln -s $conf /etc/httpd/conf.d
+                    ln -sf $conf /etc/httpd/conf.d
+
+                    FILENAME=$(basename $conf)
+
+                    cat > /etc/awslogs/config/httpd-${!FILENAME} <<-EOF
+                [/var/log/httpd/${!FILENAME%.*}_access_log]
+                datetime_format = %b %d %H:%M:%S %Y
+                file = /var/log/httpd/${!FILENAME%.*}_access_log
+                log_stream_name = {instance_id}/var/log/httpd/${!FILENAME%.*}_access_log
+                log_group_name = ${WebServerLogs}
+                [/var/log/httpd/${!FILENAME%.*}_error_log]
+                datetime_format = %d/%b/%Y:%H:%M:%S %z
+                file = /var/log/httpd/${!FILENAME%.*}_error_log
+                log_stream_name = {instance_id}/var/log/httpd/${!FILENAME%.*}_error_log
+                log_group_name = ${WebServerLogs}
+                EOF
                   fi
                 done
+                systemctl restart awslogsd
               mode: '000500'
               owner: root
               group: root
