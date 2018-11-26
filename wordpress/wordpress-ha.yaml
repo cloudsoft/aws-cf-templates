@@ -58,6 +58,12 @@ Metadata:
       - DBServerInstanceType
       - DBBackupRetentionPeriod
       - DBMasterUserPassword
+    - Label:
+        default: 'FTP Parameters'
+      Parameters:
+      - FTPEnabled
+      - FTPUserName
+      - FTPUserPassword
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
@@ -160,6 +166,21 @@ Parameters:
     Description: 'Name that is used to create the DNS entry with trailing dot, e.g. §{SubDomainNameWithDot}§{HostedZoneName}. Leave blank for naked (or apex and bare) domain.'
     Type: String
     Default: 'www.'
+  FTPEnabled:
+    Description: Enable or Disable the use of FTP
+    Type: String
+    AllowedValues: [ Enabled, Disabled ]
+    Default: Enabled
+  FTPUserName:
+    Description: 'A username for FTP server.'
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]+'
+  FTPUserPassword:
+    Description: 'The password for the FTP user.'
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 32
 Mappings:
   RegionMap:
     'ap-south-1':
@@ -207,6 +228,8 @@ Conditions:
   HasAlertTopicAndNotEFSProvisionedThroughput: !And [!Condition HasAlertTopic, !Condition HasNotEFSProvisionedThroughput]
   HasCloudFrontEnabled: !Equals [!Ref CloudFrontEnabled, 'Enabled']
   HasCloudFrontDisabled: !Equals [!Ref CloudFrontEnabled, 'Disabled']
+  HasFTPEnabled: !Equals [!Ref FTPEnabled, 'Enabled']
+  HasFTPDisabled: !Equals [!Ref FTPEnabled, 'Disabled']
   HasElbAcmCertificate: !Not [!Equals [!Ref ElbAcmCertificate, '']]
 Resources:
   WebServerLogs:
@@ -283,6 +306,20 @@ Resources:
         FromPort: 3306
         ToPort: 3306
         SourceSecurityGroupId: !Ref WebServerSecurityGroup
+  FTPSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'wordpress-ftp'
+      VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 21
+        ToPort: 21
+        CidrIp: '0.0.0.0/0'
+      - IpProtocol: tcp
+        FromPort: 1024
+        ToPort: 1048
+        CidrIp: '0.0.0.0/0'
   DatabaseSecurityGroupInSSHBastion:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasSSHBastionSecurityGroup
@@ -580,7 +617,7 @@ Resources:
     Metadata:
       'AWS::CloudFormation::Init':
         configSets:
-          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, extras, config], [awslogs, extras, config]]
+          default: !If [HasIAMUserSSHAccess, [awslogs, ssh-access, extras, config, ftp-access], [awslogs, extras, config, ftp-access]]
         awslogs:
           packages:
             yum:
@@ -916,6 +953,34 @@ Resources:
               amazon-ssm-agent:
                 enabled: !If [HasSystemsManagerAccess, true, false]
                 ensureRunning: !If [HasSystemsManagerAccess, true, false]
+        ftp-access:
+          packages:
+            yum:
+              vsftpd: []
+          files:
+            '/root/ftp.sh':
+              content: !Sub |
+                #!/bin/bash -ex
+                # Configure vsftpd + add FTP user
+                sed -i 's/anonymous_enable=YES/anonymous_enable=NO/' /etc/vsftpd/vsftpd.conf
+                sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/' /etc/vsftpd/vsftpd.conf
+                echo 'pasv_enable=YES' >> /etc/vsftpd/vsftpd.conf
+                echo 'pasv_min_port=1024' >> /etc/vsftpd/vsftpd.conf
+                echo 'pasv_max_port=1048' >> /etc/vsftpd/vsftpd.conf
+                adduser -g apache -d /var/www -s /sbin/nologin ${FTPUserName}
+                echo '${FTPUserPassword}' | passwd ${FTPUserName} --stdin
+              mode: '000500'
+              owner: root
+              group: root
+          commands:
+            01_ftp:
+              command: '/root/ftp.sh'
+          services:
+            sysvinit:
+              vsftpd:
+                enabled: !If [HasFTPEnabled, true, false]
+                ensureRunning: !If [HasFTPEnabled, true, false]
+                files: ['/etc/vsftpd/vsftpd.conf']
     Properties:
       AssociatePublicIpAddress: true
       IamInstanceProfile: !Ref WebServerInstanceProfile
