@@ -32,6 +32,7 @@ Metadata:
       - CloudFrontEnabled
       - CloudFrontAcmCertificate
       - ElbAcmCertificate
+      - ServeHTTP
     - Label:
         default: 'WordPress Parameters'
       Parameters:
@@ -94,6 +95,11 @@ Parameters:
   ElbAcmCertificate:
     Description: 'Optional. The ACM Certificate ARN for the ELB. Must be created in the same region as this stack!'
     Type: String
+  ServeHTTP:
+    Description: Enable or Disable the use of HTTP connection to the load balancer. If not enabled, must supply ACM certificate for the ELB
+    Type: String
+    AllowedValues: [ Enabled, Disabled ]
+    Default: Disabled
   BlogTitle:
     Description: 'The title of the WordPress blog.'
     Type: String
@@ -231,6 +237,13 @@ Conditions:
   HasFTPEnabled: !Equals [!Ref FTPEnabled, 'Enabled']
   HasFTPDisabled: !Equals [!Ref FTPEnabled, 'Disabled']
   HasElbAcmCertificate: !Not [!Equals [!Ref ElbAcmCertificate, '']]
+  HasHTTPEnabled: !Equals [!Ref ServeHTTP, 'Enabled']
+  HasHTTPEnabledForSecurityGroup: !And
+  - !Condition HasNotAuthProxySecurityGroup
+  - !Condition HasHTTPEnabled
+  HasHTTPSEnabledForSecurityGroup: !And
+  - !Condition HasNotAuthProxySecurityGroup
+  - !Condition HasElbAcmCertificate
 Resources:
   WebServerLogs:
     Type: 'AWS::Logs::LogGroup'
@@ -241,23 +254,41 @@ Resources:
     Properties:
       GroupDescription: 'wordpress-elb'
       VpcId: {'Fn::ImportValue': !Sub '${ParentVPCStack}-VPC'}
-  LoadBalancerSecurityGroupInWorldIPv4:
+  LoadBalancerSecurityGroupInWorldHTTPIPv4:
     Type: 'AWS::EC2::SecurityGroupIngress'
-    Condition: HasNotAuthProxySecurityGroup
+    Condition: HasHTTPEnabledForSecurityGroup
     Properties:
       GroupId: !Ref LoadBalancerSecurityGroup
       IpProtocol: tcp
-      FromPort: !If [ HasElbAcmCertificate, '443', '80' ]
-      ToPort: !If [ HasElbAcmCertificate, '443', '80' ]
+      FromPort: '80'
+      ToPort: '80'
       CidrIp: '0.0.0.0/0'
-  LoadBalancerSecurityGroupInWorldIPv6:
+  LoadBalancerSecurityGroupInWorldHTTPIPv6:
     Type: 'AWS::EC2::SecurityGroupIngress'
-    Condition: HasNotAuthProxySecurityGroup
+    Condition: HasHTTPEnabledForSecurityGroup
     Properties:
       GroupId: !Ref LoadBalancerSecurityGroup
       IpProtocol: tcp
-      FromPort: !If [ HasElbAcmCertificate, '443', '80' ]
-      ToPort: !If [ HasElbAcmCertificate, '443', '80' ]
+      FromPort: '80'
+      ToPort: '80'
+      CidrIpv6: '::/0'
+  LoadBalancerSecurityGroupInWorldHTTPSIPv4:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: HasHTTPSEnabledForSecurityGroup
+    Properties:
+      GroupId: !Ref LoadBalancerSecurityGroup
+      IpProtocol: tcp
+      FromPort: '443'
+      ToPort: '443'
+      CidrIp: '0.0.0.0/0'
+  LoadBalancerSecurityGroupInWorldHTTPSIPv6:
+    Type: 'AWS::EC2::SecurityGroupIngress'
+    Condition: HasHTTPSEnabledForSecurityGroup
+    Properties:
+      GroupId: !Ref LoadBalancerSecurityGroup
+      IpProtocol: tcp
+      FromPort: '443'
+      ToPort: '443'
       CidrIpv6: '::/0'
   LoadBalancerSecurityGroupInAuthProxy:
     Type: 'AWS::EC2::SecurityGroupIngress'
@@ -421,11 +452,21 @@ Resources:
       - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetAPublic'}
       - {'Fn::ImportValue': !Sub '${ParentVPCStack}-SubnetBPublic'}
       Listeners:
-      - InstancePort: '80'
-        InstanceProtocol: HTTP
-        LoadBalancerPort: !If [ HasElbAcmCertificate, '443', '80' ]
-        Protocol: !If [ HasElbAcmCertificate, 'HTTPS', 'HTTP' ]
-        SSLCertificateId: !Ref ElbAcmCertificate
+      - !If
+        - HasElbAcmCertificate
+        - InstancePort: '80'
+          InstanceProtocol: HTTP
+          LoadBalancerPort: '443'
+          Protocol: 'HTTPS'
+          SSLCertificateId: !Ref ElbAcmCertificate
+        - !Ref 'AWS::NoValue'
+      - !If
+        - HasHTTPEnabled
+        - InstancePort: '80'
+          InstanceProtocol: HTTP
+          LoadBalancerPort: '80'
+          Protocol: 'HTTP'
+        - !Ref 'AWS::NoValue'
       HealthCheck:
         HealthyThreshold: '2'
         Interval: '5'
