@@ -65,6 +65,7 @@ Metadata:
       - FTPEnabled
       - FTPUserName
       - FTPUserPassword
+      - FTPSubDomainNameWithDot
 Parameters:
   ParentVPCStack:
     Description: 'Stack name of parent VPC stack based on vpc/vpc-*azs.yaml template.'
@@ -187,6 +188,11 @@ Parameters:
     NoEcho: true
     MinLength: 8
     MaxLength: 32
+  FTPSubDomainNameWithDot:
+    Description: 'Name that is used to create the DNS entry with trailing dot for FTP, e.g. §{FTPSubDomainNameWithDot}§{HostedZoneName}.'
+    Type: String
+    Default: 'ftp.'
+    AllowedPattern: '[a-zA-Z0-9\.\-]+\.'
 Mappings:
   RegionMap:
     'ap-south-1':
@@ -235,7 +241,6 @@ Conditions:
   HasCloudFrontEnabled: !Equals [!Ref CloudFrontEnabled, 'Enabled']
   HasCloudFrontDisabled: !Equals [!Ref CloudFrontEnabled, 'Disabled']
   HasFTPEnabled: !Equals [!Ref FTPEnabled, 'Enabled']
-  HasFTPDisabled: !Equals [!Ref FTPEnabled, 'Disabled']
   HasElbAcmCertificate: !Not [!Equals [!Ref ElbAcmCertificate, '']]
   HasHTTPEnabled: !Equals [!Ref ServeHTTP, 'Enabled']
   HasHTTPEnabledForSecurityGroup: !And
@@ -244,6 +249,9 @@ Conditions:
   HasHTTPSEnabledForSecurityGroup: !And
   - !Condition HasNotAuthProxySecurityGroup
   - !Condition HasElbAcmCertificate
+  HasFTPSubDomain: !And
+  - !Condition HasFTPEnabled
+  - !Not [!Equals [!Ref ParentZoneStack, '']]
 Resources:
   WebServerLogs:
     Type: 'AWS::Logs::LogGroup'
@@ -351,6 +359,24 @@ Resources:
         FromPort: 1024
         ToPort: 1048
         CidrIp: '0.0.0.0/0'
+  FTPElasticIp:
+    Type: 'AWS::EC2::EIP'
+    Condition: HasFTPEnabled
+    Properties:
+      Domain: vpc
+  FTPRecordSet:
+    Type: 'AWS::Route53::RecordSet'
+    Condition: HasFTPSubDomain
+    Properties:
+      HostedZoneId: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneId'}
+      Name: !Sub
+      - '${FTPSubDomainNameWithDot}${HostedZoneName}'
+      - FTPSubDomainNameWithDot: !Ref FTPSubDomainNameWithDot
+        HostedZoneName: {'Fn::ImportValue': !Sub '${ParentZoneStack}-HostedZoneName'}
+      ResourceRecords:
+      - !Ref FTPElasticIp
+      TTL: '60'
+      Type: A
   DatabaseSecurityGroupInSSHBastion:
     Type: 'AWS::EC2::SecurityGroupIngress'
     Condition: HasSSHBastionSecurityGroup
@@ -790,6 +816,21 @@ Resources:
               mode: '000644'
               owner: root
               group: root
+            '/etc/awslogs/config/vsftpd.conf':
+              content: !Sub |
+                [/var/log/xferlog]
+                datetime_format = %b %d %H:%M:%S %Y
+                file = /var/log/xferlog
+                log_stream_name = {instance_id}/var/log/xferlog
+                log_group_name = ${WebServerLogs}
+                [/var/log/vsftpd.log]
+                datetime_format = %b %d %H:%M:%S %Y
+                file = /var/log/vsftpd.log
+                log_stream_name = {instance_id}/var/log/vsftpd.log
+                log_group_name = ${WebServerLogs}
+              mode: '000644'
+              owner: root
+              group: root
           services:
             sysvinit:
               awslogsd:
@@ -803,6 +844,7 @@ Resources:
                 - '/etc/awslogs/awscli.conf'
                 - '/etc/awslogs/config/efs.conf'
                 - '/etc/awslogs/config/httpd.conf'
+                - '/etc/awslogs/config/vsftpd.conf'
         ssh-access:
           files:
             '/opt/authorized_keys_command.sh':
@@ -1000,16 +1042,28 @@ Resources:
               vsftpd: []
           files:
             '/root/ftp.sh':
-              content: !Sub |
-                #!/bin/bash -ex
-                # Configure vsftpd + add FTP user
-                sed -i 's/anonymous_enable=YES/anonymous_enable=NO/' /etc/vsftpd/vsftpd.conf
-                sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/' /etc/vsftpd/vsftpd.conf
-                echo 'pasv_enable=YES' >> /etc/vsftpd/vsftpd.conf
-                echo 'pasv_min_port=1024' >> /etc/vsftpd/vsftpd.conf
-                echo 'pasv_max_port=1048' >> /etc/vsftpd/vsftpd.conf
-                adduser -g apache -d /var/www -s /sbin/nologin ${FTPUserName}
-                echo '${FTPUserPassword}' | passwd ${FTPUserName} --stdin
+              content: !Sub
+              - |
+                  #!/bin/bash -ex
+                  # Configure vsftpd + add FTP user
+                  sed -i 's/anonymous_enable=YES/anonymous_enable=NO/' /etc/vsftpd/vsftpd.conf
+                  sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/' /etc/vsftpd/vsftpd.conf
+                  sed -i 's/#listen=NO/listen=YES/' /etc/vsftpd/vsftpd.conf
+                  sed -i 's/#listen_ipv6=YES/listen_ipv6=NO/' /etc/vsftpd/vsftpd.conf
+                  echo 'pasv_enable=YES' >> /etc/vsftpd/vsftpd.conf
+                  echo 'pasv_min_port=1024' >> /etc/vsftpd/vsftpd.conf
+                  echo 'pasv_max_port=1048' >> /etc/vsftpd/vsftpd.conf
+                  echo 'pasv_address=${FTPElasticIp}' >> /etc/vsftpd/vsftpd.conf
+                  echo 'pasv_addr_resolve=NO' >> /etc/vsftpd/vsftpd.conf
+                  echo 'syslog_enable=NO' >> /etc/vsftpd/vsftpd.conf
+                  echo 'dual_log_enable=YES' >> /etc/vsftpd/vsftpd.conf
+                  echo 'log_ftp_protocol=YES' >> /etc/vsftpd/vsftpd.conf
+                  echo 'vsftpd_log_file=/var/log/vsftpd.log' >> /etc/vsftpd/vsftpd.conf
+                  adduser -g apache -d /var/www -s /sbin/nologin ${FTPUserName}
+                  echo '${FTPUserPassword}' | passwd ${FTPUserName} --stdin
+              - FTPUserName: !Ref FTPUserName
+                FTPUserPassword: !Ref FTPUserPassword
+                FTPElasticIp: !If [HasFTPEnabled, !Ref FTPElasticIp, '0.0.0.0']
               mode: '000500'
               owner: root
               group: root
