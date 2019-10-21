@@ -65,6 +65,8 @@ Metadata:
       - FTPEnabled
       - FTPUserName
       - FTPUserPassword
+      - FTPUserName2
+      - FTPUserPassword2
       - FTPSubDomainNameWithDot
 Parameters:
   ParentVPCStack:
@@ -184,6 +186,16 @@ Parameters:
     AllowedPattern: '[a-zA-Z0-9]+'
   FTPUserPassword:
     Description: 'The password for the FTP user.'
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 32
+  FTPUserName2:
+    Description: "A username for FTP server's optional second user."
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]+'
+  FTPUserPassword2:
+    Description: 'The password for the FTP optional second user - if not required set to eight letters of junk.'
     Type: String
     NoEcho: true
     MinLength: 8
@@ -629,6 +641,15 @@ Resources:
             - 'logs:PutLogEvents'
             - 'logs:DescribeLogStreams'
             Resource: !GetAtt 'WebServerLogs.Arn'
+      - PolicyName: ManageElasticIP
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:DescribeAddresses'
+            - 'ec2:AssociateAddress'
+            Resource: '*'
   WebServerIAMPolicySSHAccess:
     Type: 'AWS::IAM::Policy'
     Condition: HasIAMUserSSHAccess
@@ -1036,10 +1057,13 @@ Resources:
               - |
                   #!/bin/bash -ex
                   # Configure vsftpd + add FTP user
-                  sed -i 's/anonymous_enable=YES/anonymous_enable=NO/' /etc/vsftpd/vsftpd.conf
-                  sed -i 's/#chroot_local_user=YES/chroot_local_user=YES/' /etc/vsftpd/vsftpd.conf
-                  sed -i 's/#listen=NO/listen=YES/' /etc/vsftpd/vsftpd.conf
-                  sed -i 's/#listen_ipv6=YES/listen_ipv6=NO/' /etc/vsftpd/vsftpd.conf
+                  set -o errexit
+                  set -o xtrace
+                  yum install -y jq
+                  sed -i~ 's/anonymous_enable=YES/anonymous_enable=NO/' /etc/vsftpd/vsftpd.conf
+                  sed -i~ 's/#chroot_local_user=YES/chroot_local_user=YES/' /etc/vsftpd/vsftpd.conf
+                  sed -i~ 's/#\?listen=NO/listen=YES/' /etc/vsftpd/vsftpd.conf
+                  sed -i~ 's/#\?listen_ipv6=YES/listen_ipv6=NO/' /etc/vsftpd/vsftpd.conf
                   echo 'pasv_enable=YES' >> /etc/vsftpd/vsftpd.conf
                   echo 'pasv_min_port=1024' >> /etc/vsftpd/vsftpd.conf
                   echo 'pasv_max_port=1048' >> /etc/vsftpd/vsftpd.conf
@@ -1049,10 +1073,19 @@ Resources:
                   echo 'dual_log_enable=YES' >> /etc/vsftpd/vsftpd.conf
                   echo 'log_ftp_protocol=YES' >> /etc/vsftpd/vsftpd.conf
                   echo 'vsftpd_log_file=/var/log/vsftpd.log' >> /etc/vsftpd/vsftpd.conf
-                  adduser -g apache -d /var/www -s /sbin/nologin ${FTPUserName}
+                  echo 'allow_writeable_chroot=YES' >> /etc/vsftpd/vsftpd.conf
+                  adduser -g apache -d /var/www/httpdocs -s /sbin/nologin ${FTPUserName}
                   echo '${FTPUserPassword}' | passwd ${FTPUserName} --stdin
+                  if [[ ! -z '${FTPUserName2}' ]]; then
+                    adduser -g apache -d /var/www/httpdocs -s /sbin/nologin ${FTPUserName2}
+                    echo '${FTPUserPassword2}' | passwd ${FTPUserName2} --stdin
+                  fi
+                  MY_INSTANCE_ID="$( wget -q -O - http://169.254.169.254/latest/meta-data/instance-id )"
+                  eval $( aws ec2 describe-addresses --region eu-west-1 | jq '.Addresses[] | select (.PublicIp=="${FTPElasticIp}" and .InstanceId == null) | "aws ec2 associate-address --region eu-west-1 --allocation-id " + .AllocationId + " --instance-id $MY_INSTANCE_ID"' -r )
               - FTPUserName: !Ref FTPUserName
                 FTPUserPassword: !Ref FTPUserPassword
+                FTPUserName2: !Ref FTPUserName2
+                FTPUserPassword2: !Ref FTPUserPassword2
                 FTPElasticIp: !If [HasFTPEnabled, !Ref FTPElasticIp, '0.0.0.0']
               mode: '000500'
               owner: root
