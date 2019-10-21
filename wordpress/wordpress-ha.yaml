@@ -193,38 +193,9 @@ Parameters:
     Type: String
     Default: 'ftp.'
     AllowedPattern: '[a-zA-Z0-9\.\-]+\.'
-Mappings:
-  RegionMap:
-    'ap-south-1':
-      AMI: 'ami-d783a9b8'
-    'eu-west-3':
-      AMI: 'ami-2cf54551'
-    'eu-west-2':
-      AMI: 'ami-b8b45ddf'
-    'eu-west-1':
-      AMI: 'ami-466768ac'
-    'ap-northeast-2':
-      AMI: 'ami-afd86dc1'
-    'ap-northeast-1':
-      AMI: 'ami-e99f4896'
-    'sa-east-1':
-      AMI: 'ami-6dca9001'
-    'ca-central-1':
-      AMI: 'ami-0ee86a6a'
-    'ap-southeast-1':
-      AMI: 'ami-05868579'
-    'ap-southeast-2':
-      AMI: 'ami-39f8215b'
-    'eu-central-1':
-      AMI: 'ami-7c4f7097'
-    'us-east-1':
-      AMI: 'ami-b70554c8'
-    'us-east-2':
-      AMI: 'ami-8c122be9'
-    'us-west-1':
-      AMI: 'ami-e0ba5c83'
-    'us-west-2':
-      AMI: 'ami-a9d09ed1'
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
 Conditions:
   HasKeyName: !Not [!Equals [!Ref WebServerKeyName, '']]
   HasIAMUserSSHAccess: !Equals [!Ref WebServerIAMUserSSHAccess, 'true']
@@ -517,7 +488,7 @@ Resources:
       BackupRetentionPeriod: !Ref DBBackupRetentionPeriod
       DBInstanceClass: !Ref DBServerInstanceType
       DBName: wordpress
-      Engine: MySQL
+      Engine: MariaDB
       MasterUsername: wordpress
       MasterUserPassword: !Ref DBMasterUserPassword
       VPCSecurityGroups:
@@ -646,7 +617,7 @@ Resources:
           Action:
           - 'sts:AssumeRole'
       Path: '/'
-      ManagedPolicyArns: !If [HasSystemsManagerAccess, ['arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM'], []] # TODO get rid of managed policy
+      ManagedPolicyArns: !If [HasSystemsManagerAccess, [ !Sub [ 'arn:aws:iam::${AWS::AccountId}:policy/ReducedAmazonEC2RoleforSSMandCloudWatch', {}] ], []] # TODO get rid of managed policy
       Policies:
       - PolicyName: logs
         PolicyDocument:
@@ -975,13 +946,20 @@ Resources:
               mode: '000500'
               owner: root
               group: root
-            '/etc/httpd/conf.d/wordpress.conf':
+            '/root/node-and-yarn-and-composer.sh':
               content: |
-                <Directory "/var/www/html">
-                Options Indexes FollowSymLinks
-                AllowOverride All
-                Require all granted
-                </Directory>
+                #!/bin/bash -ex
+                curl -sL https://rpm.nodesource.com/setup_10.x | bash -
+                yum install -y nodejs
+                curl -sL https://dl.yarnpkg.com/rpm/yarn.repo | tee /etc/yum.repos.d/yarn.repo
+                yum install -y yarn
+                mkdir -p /tmp/composer-install/.composer
+                cd /tmp/composer-install
+                php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+                php -r "if (hash_file('sha384', 'composer-setup.php') === 'a5c698ffe4b8e849a443b120cd5ba38043260d5c4023dbf93e1558871f1f07f58274fc6f4c93bcfd858c6bd0775cd8d1') { echo 'Installer verified'; } else { echo 'Installer corrupt'; unlink('composer-setup.php'); } echo PHP_EOL;"
+                HOME=/tmp/composer-install COMPOSER_HOME=/tmp/composer-install/.composer php composer-setup.php
+                php -r "unlink('composer-setup.php');"
+                mv /tmp/composer-install/composer.phar /usr/local/bin/composer
               mode: '000500'
               owner: root
               group: root
@@ -998,6 +976,15 @@ Resources:
                       php wp-cli.phar core config --dbname='wordpress' --dbuser='wordpress' --dbpass='${DBMasterUserPassword}' --dbhost='${DBHost}' --allow-root
                       php wp-cli.phar core install --url='${Protocol}://${DomainName}' --title='${BlogTitle}' --admin_user='${BlogAdminUsername}' --admin_password='${BlogAdminPassword}' --admin_email='${BlogAdminEMail}' --skip-email --allow-root
                       sed -i "/$table_prefix = 'wp_';/a\$_SERVER['HTTPS'] = '${HttpsOnOrOff}';" /var/www/html/wp-config.php
+                      mkdir -p /var/www/conf.d
+                      echo >/var/www/conf.d/wordpress.conf <<EOF
+                  <Directory "/var/www/html">
+                  Options Indexes FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+                  </Directory>
+                  EOF
+                      echo >>/etc/httpd/conf/httpd.conf 'IncludeOptional /var/www/conf.d/*.conf'
                     fi
                     chown -R apache:apache /var/www/html
                     chmod u+wrx /var/www/html/wp-content/*
@@ -1027,6 +1014,9 @@ Resources:
               cwd: '/var/www/html'
             03_wordpress:
               command: '/root/wordpress.sh'
+              cwd: '/var/www/html'
+            04_node_and_yarn_and_composer.sh:
+              command: '/root/node-and-yarn-and-composer.sh'
               cwd: '/var/www/html'
           services:
             sysvinit:
@@ -1079,7 +1069,7 @@ Resources:
     Properties:
       AssociatePublicIpAddress: true
       IamInstanceProfile: !Ref WebServerInstanceProfile
-      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      ImageId: !Ref LatestAmiId
       InstanceType: !Ref WebServerInstanceType
       SecurityGroups:
       - !Ref WebServerSecurityGroup
@@ -1296,7 +1286,7 @@ Resources:
       Handler: 'index.handler'
       MemorySize: 128
       Role: !GetAtt 'LambdaRole.Arn'
-      Runtime: 'nodejs6.10'
+      Runtime: 'nodejs8.10'
       Timeout: 60
   LambdaLogGroup:
     Type: 'AWS::Logs::LogGroup'
