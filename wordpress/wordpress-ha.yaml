@@ -1082,10 +1082,14 @@ Resources:
                   echo 'log_ftp_protocol=YES' >> /etc/vsftpd/vsftpd.conf
                   echo 'vsftpd_log_file=/var/log/vsftpd.log' >> /etc/vsftpd/vsftpd.conf
                   echo 'allow_writeable_chroot=YES' >> /etc/vsftpd/vsftpd.conf
-                  adduser -g apache -d /var/www/httpdocs -s /sbin/nologin ${FTPUserName}
+                  echo 'ssl_enable=YES' >> /etc/vsftpd/vsftpd.conf
+                  echo 'rsa_cert_file=/var/www/vsftpd.conf.d/vsftpd.pem' >> /etc/vsftpd/vsftpd.conf
+                  ln -s nologin /sbin/ftplogin
+                  echo "/sbin/ftplogin" >> /etc/shells
+                  adduser -g apache -d /var/www/httpdocs -s /sbin/ftplogin ${FTPUserName}
                   echo '${FTPUserPassword}' | passwd ${FTPUserName} --stdin
                   if [[ ! -z '${FTPUserName2}' ]]; then
-                    adduser -g apache -d /var/www/httpdocs -s /sbin/nologin ${FTPUserName2}
+                    adduser -g apache -d /var/www/httpdocs -s /sbin/ftplogin ${FTPUserName2}
                     echo '${FTPUserPassword2}' | passwd ${FTPUserName2} --stdin
                   fi
                   MY_INSTANCE_ID="$( wget -q -O - http://169.254.169.254/latest/meta-data/instance-id )"
